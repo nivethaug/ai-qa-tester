@@ -1,6 +1,7 @@
 """
 AI QA Tester - Scheduler
 Main async loops: project creation + status polling + verification dispatch.
+Supports all project types: website, telegrambot, discordbot, scheduler.
 """
 
 import asyncio
@@ -22,11 +23,14 @@ from logger import log_event, log_error
 # Track which projects have already triggered verification
 _verification_triggered: set = set()
 
+# type_id values that support Claude website verification
+WEBSITE_VERIFICATION_TYPES = {1}
+
 
 async def creation_loop():
     """
     Create 1-2 new projects every CREATE_INTERVAL seconds.
-    Uses GLM to generate ideas, then POSTs to backend API.
+    Uses GLM to generate ideas for random project types, then POSTs to backend API.
     """
     while True:
         try:
@@ -42,14 +46,21 @@ async def creation_loop():
                         log_error("CREATE", "No idea generated, skipping")
                         continue
 
+                    type_id = idea.get("type_id", 1)
+                    type_label = idea.get("type_label", "website")
+
                     project = await create_project(
                         idea["name"],
                         idea["description"],
+                        type_id=type_id,
                     )
                     if project:
                         pid = project.get("id")
                         domain = project.get("domain", idea["name"])
-                        upsert_project(pid, domain, idea["description"], "creating")
+                        upsert_project(
+                            pid, domain, idea["description"], "creating",
+                            type_id=type_id, type_label=type_label,
+                        )
 
         except Exception as e:
             log_error("CREATE", f"Loop error: {e}\n{traceback.format_exc()}")
@@ -60,7 +71,8 @@ async def creation_loop():
 async def status_loop():
     """
     Poll active projects every STATUS_POLL_INTERVAL seconds.
-    When status becomes 'ready', trigger verification.
+    When status becomes 'ready', trigger verification (website only)
+    or mark as verified directly (bot/scheduler types).
     """
     global _verification_triggered
 
@@ -81,14 +93,28 @@ async def status_loop():
                     continue
 
                 if api_status != current_status:
-                    log_event("STATUS", f"id={pid} → {api_status}")
+                    log_event("STATUS", f"id={pid} -> {api_status}")
                     update_status(pid, api_status)
 
                 if api_status == "ready":
                     _verification_triggered.add(pid)
 
+                    type_id = proj.get("type_id", 1)
+                    type_label = proj.get("type_label", "website")
+
                     # Skip Claude verification if SKIP_CLAUDE env is set
                     skip_claude = os.getenv("SKIP_CLAUDE", "false").lower() in ("true", "1", "yes")
+
+                    # Non-website types don't have frontend to verify with Claude
+                    if type_id not in WEBSITE_VERIFICATION_TYPES:
+                        update_status(pid, "verified")
+                        log_event("VERIFY-SKIP", f"id={pid} [{type_label}] (no frontend to verify)")
+                        # Still send notification for non-website projects
+                        asyncio.create_task(
+                            _send_creation_notification(pid, type_label, proj.get("description", ""))
+                        )
+                        continue
+
                     if skip_claude:
                         update_status(pid, "verified")
                         log_event("VERIFY-SKIP", f"id={pid} (SKIP_CLAUDE mode)")
@@ -110,6 +136,36 @@ async def status_loop():
             log_error("STATUS", f"Loop error: {e}")
 
         await asyncio.sleep(STATUS_POLL_INTERVAL)
+
+
+async def _send_creation_notification(
+    project_id: int,
+    type_label: str,
+    description: str,
+):
+    """Send notification that a non-website project was created successfully."""
+    try:
+        msg = f"Project {project_id} [{type_label}] created successfully: {description[:100]}"
+
+        # Send telegram
+        await send_telegram(
+            project_id,
+            score=10,
+            verdict="created",
+            issues=[],
+        )
+
+        # Send discord
+        await send_discord(
+            project_id,
+            score=10,
+            verdict="created",
+            issues=[],
+            security_issues=[],
+        )
+
+    except Exception as e:
+        log_error("NOTIFY", f"id={project_id} creation notification error: {e}")
 
 
 async def _run_verification_with_notifications(

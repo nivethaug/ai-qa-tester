@@ -65,5 +65,27 @@ DISCORD_ENABLED = bool(DISCORD_WEBHOOK_URL)
 DEFAULT_USER_ID = int(os.getenv("DEFAULT_USER_ID", "1"))
 DEFAULT_TEMPLATE_ID = os.getenv("DEFAULT_TEMPLATE_ID", "blank-template")
 
+# ── Project Types ─────────────────────────────────────
+# Enable/disable project types for random testing
+# type_id: 1=website, 2=telegrambot, 3=discordbot, 5=scheduler
+ENABLED_PROJECT_TYPES = [
+    t.strip()
+    for t in os.getenv("ENABLED_PROJECT_TYPES", "1,2,3,5").split(",")
+    if t.strip().isdigit()
+]
+
+# ── Test Credentials (for bot/scheduler creation) ──────
+# Telegram bot projects need a bot token
+TEST_TELEGRAM_BOT_TOKEN = os.getenv("TEST_TELEGRAM_BOT_TOKEN", "")
+
+# Discord bot projects need a bot token
+TEST_DISCORD_BOT_TOKEN = os.getenv("TEST_DISCORD_BOT_TOKEN", "")
+
+# Scheduler projects need sender channels
+TEST_SCHEDULER_TELEGRAM_TOKEN = os.getenv("TEST_SCHEDULER_TELEGRAM_TOKEN", TELEGRAM_BOT_TOKEN)
+TEST_SCHEDULER_CHAT_ID = os.getenv("TEST_SCHEDULER_CHAT_ID", TELEGRAM_CHAT_ID)
+TEST_SCHEDULER_DISCORD_WEBHOOK = os.getenv("TEST_SCHEDULER_DISCORD_WEBHOOK", DISCORD_WEBHOOK_URL)
+TEST_SCHEDULER_EMAIL_TO = os.getenv("TEST_SCHEDULER_EMAIL_TO", SMTP_TO.split(",")[0] if SMTP_TO else "")
+
 # ── Misc ──────────────────────────────────────────────
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

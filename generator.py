@@ -1,18 +1,36 @@
 """
 AI QA Tester - Project Idea Generator
 Uses GLM API to generate real-world app ideas for testing.
+Supports all project types: website, telegrambot, discordbot, scheduler.
 """
 
 import json
+import random
 import httpx
 from typing import Optional, Dict, Any
 
-from config import Z_AI_API_KEY, Z_AI_API_BASE, Z_AI_MODEL
+from config import Z_AI_API_KEY, Z_AI_API_BASE, Z_AI_MODEL, ENABLED_PROJECT_TYPES
 from logger import log_event, log_error
 
-IDEA_PROMPT = """Generate a creative web app idea for QA testing. Reply JSON only:
-{"name":"kebab-case-name","description":"Full app description including 4 pages (home + 3 internal) with their layouts, components and interactions"}
-Rules: max 30 char name, creative SaaS/dashboard/automation app, specific UX details in description."""
+# type_id -> (label, prompt instruction)
+TYPE_CONFIG = {
+    "1": {
+        "label": "website",
+        "prompt": "Generate a creative web app idea for QA testing. Include 4 pages (home + 3 internal) with layouts, components and interactions.",
+    },
+    "2": {
+        "label": "telegrambot",
+        "prompt": "Generate a creative Telegram bot idea for QA testing. Include bot commands, inline keyboards, webhook handlers, and user interaction flows.",
+    },
+    "3": {
+        "label": "discordbot",
+        "prompt": "Generate a creative Discord bot idea for QA testing. Include slash commands, event handlers, moderation features, and server management capabilities.",
+    },
+    "5": {
+        "label": "scheduler",
+        "prompt": "Generate a creative scheduled automation idea for QA testing. Include what data to fetch (crypto, weather, news, stocks, etc), how often, and which channels to send to (telegram, discord, email).",
+    },
+}
 
 TIMEOUT = 60.0
 MAX_TOKENS = 4096
@@ -66,15 +84,36 @@ def _extract_json(content: str) -> Optional[dict]:
     return json.loads(content)
 
 
-async def generate_project_idea() -> Optional[Dict[str, Any]]:
-    """Generate project idea with page details in description via single GLM call."""
+def pick_random_type() -> str:
+    """Pick a random project type_id from enabled types."""
+    return random.choice(ENABLED_PROJECT_TYPES)
+
+
+async def generate_project_idea(type_id: str = None) -> Optional[Dict[str, Any]]:
+    """
+    Generate project idea for a given type via GLM.
+    If type_id is None, picks a random enabled type.
+
+    Returns dict with: name, description, type_id, type_label
+    """
     if not Z_AI_API_KEY:
         log_error("GENERATOR", "Z_AI_API_KEY not configured")
         return None
 
+    if not type_id:
+        type_id = pick_random_type()
+
+    cfg = TYPE_CONFIG.get(type_id, TYPE_CONFIG["1"])
+    type_label = cfg["label"]
+
+    prompt = f"""{cfg['prompt']}
+Reply JSON only:
+{{"name":"kebab-case-name","description":"Full description with features and functionality"}}
+Rules: max 30 char name, creative and specific app, detailed description."""
+
     messages = [
         {"role": "system", "content": "You output valid JSON only. No explanation."},
-        {"role": "user", "content": IDEA_PROMPT},
+        {"role": "user", "content": prompt},
     ]
 
     content = await _call_glm(messages)
@@ -88,5 +127,8 @@ async def generate_project_idea() -> Optional[Dict[str, Any]]:
         log_error("GENERATOR", f"Failed to parse idea: {repr(content[:200])}")
         return None
 
-    log_event("GENERATOR", f"Idea: {idea['name']} - {idea['description'][:80]}...")
+    idea["type_id"] = int(type_id)
+    idea["type_label"] = type_label
+
+    log_event("GENERATOR", f"[{type_label}] Idea: {idea['name']} - {idea['description'][:80]}...")
     return idea

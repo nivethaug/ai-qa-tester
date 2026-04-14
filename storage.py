@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS projects (
     domain TEXT,
     description TEXT,
     status TEXT DEFAULT 'creating',
+    type_id INTEGER DEFAULT 1,
+    type_label TEXT DEFAULT 'website',
     score REAL,
     verdict TEXT,
     issues TEXT,           -- JSON list
@@ -30,6 +32,27 @@ CREATE TABLE IF NOT EXISTS projects (
 
 CREATE INDEX IF NOT EXISTS idx_status ON projects(status);
 """
+
+
+def _migrate_add_type_columns():
+    """Add type_id and type_label columns if they don't exist (migration)."""
+    conn = _get_conn()
+    try:
+        # Check if type_id column exists
+        cols = conn.execute("PRAGMA table_info(projects)").fetchall()
+        col_names = [c[1] for c in cols]
+
+        if "type_id" not in col_names:
+            conn.execute("ALTER TABLE projects ADD COLUMN type_id INTEGER DEFAULT 1")
+            conn.commit()
+            log_event("DB", "Added type_id column")
+
+        if "type_label" not in col_names:
+            conn.execute("ALTER TABLE projects ADD COLUMN type_label TEXT DEFAULT 'website'")
+            conn.commit()
+            log_event("DB", "Added type_label column")
+    finally:
+        conn.close()
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -45,6 +68,7 @@ def init_db():
     try:
         conn.executescript(SCHEMA)
         conn.commit()
+        _migrate_add_type_columns()
         log_event("DB", f"Database ready at {DB_PATH}")
     finally:
         conn.close()
@@ -55,19 +79,23 @@ def upsert_project(
     domain: str,
     description: str,
     status: str = "creating",
+    type_id: int = 1,
+    type_label: str = "website",
 ) -> None:
     """Insert or update a project."""
     conn = _get_conn()
     try:
         conn.execute(
-            """INSERT INTO projects (id, domain, description, status, created_at)
-               VALUES (?, ?, ?, ?, ?)
+            """INSERT INTO projects (id, domain, description, status, type_id, type_label, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                  domain=excluded.domain,
                  description=excluded.description,
-                 status=excluded.status
+                 status=excluded.status,
+                 type_id=excluded.type_id,
+                 type_label=excluded.type_label
             """,
-            (project_id, domain, description, status, datetime.utcnow().isoformat()),
+            (project_id, domain, description, status, type_id, type_label, datetime.utcnow().isoformat()),
         )
         conn.commit()
     finally:
