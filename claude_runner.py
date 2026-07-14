@@ -95,7 +95,7 @@ async def run_verification(
 
     Args:
         project_id: The project database ID
-        domain: Full URL (https://project.dreambigwithai.com)
+        domain: Full URL (https://project.dreamagent.cloud)
         description: Project description to verify against
 
     Returns:

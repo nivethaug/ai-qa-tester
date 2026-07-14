@@ -12,6 +12,18 @@ from typing import Optional, List, Dict, Any
 from config import DB_PATH, REPORTS_DIR
 from logger import log_event, log_error
 
+CREATION_IN_PROGRESS_STATUSES = (
+    "creating",
+    "scaffolded",
+    "initializing",
+    "building",
+    "deploying",
+    "verifying",
+    "provisioning",
+    "infrastructure_provisioning",
+    "ai_provisioning",
+)
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY,
@@ -119,8 +131,10 @@ def get_active_projects() -> List[Dict[str, Any]]:
     """Get projects with in-progress statuses."""
     conn = _get_conn()
     try:
+        placeholders = ",".join("?" for _ in CREATION_IN_PROGRESS_STATUSES)
         rows = conn.execute(
-            "SELECT * FROM projects WHERE status IN ('creating','building','deploying','verifying')",
+            f"SELECT * FROM projects WHERE status IN ({placeholders})",
+            CREATION_IN_PROGRESS_STATUSES,
         ).fetchall()
         return [dict(r) for r in rows]
     finally:

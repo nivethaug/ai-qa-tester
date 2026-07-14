@@ -18,8 +18,9 @@ REPORTS_DIR.mkdir(exist_ok=True)
 DB_PATH = BASE_DIR / "qa_tester.db"
 
 # ── Backend API ────────────────────────────────────────
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
-BASE_DOMAIN = os.getenv("BASE_DOMAIN", "dreambigwithai.com")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8002")
+BACKEND_AUTH_TOKEN = os.getenv("BACKEND_AUTH_TOKEN", os.getenv("AUTH_TOKEN", ""))
+BASE_DOMAIN = os.getenv("BASE_DOMAIN", "dreamagent.cloud")
 
 # ── LLM (GLM for project idea generation) ──────────────
 Z_AI_API_KEY = os.getenv("Z_AI_API_KEY", "")
