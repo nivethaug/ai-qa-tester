@@ -190,6 +190,39 @@ def _classify_feature_edit_failure(response: Optional[Dict[str, Any]]) -> Option
     return None
 
 
+def _latest_assistant_response(messages: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Build a response-like object from the latest saved assistant message."""
+    for message in reversed(messages):
+        if str(message.get("role", "")).lower() == "assistant":
+            content = (message.get("content") or "").strip()
+            if content:
+                return {
+                    "id": message.get("id"),
+                    "role": "assistant",
+                    "content": content,
+                    "created_at": message.get("created_at"),
+                    "source": "saved_session_message",
+                }
+    return None
+
+
+async def _wait_for_saved_assistant_message(session_id: int, timeout_seconds: int = 600) -> List[Dict[str, Any]]:
+    """Poll session history because streaming requests may finish in the backend after client disconnect."""
+    deadline = time.time() + timeout_seconds
+    last_count = 0
+
+    while time.time() < deadline:
+        messages = await get_session_messages(session_id)
+        if len(messages) != last_count:
+            log_event("SESSION", f"session={session_id} messages={len(messages)}")
+            last_count = len(messages)
+        if _latest_assistant_response(messages):
+            return messages
+        await asyncio.sleep(STABILITY_POLL_INTERVAL)
+
+    return await get_session_messages(session_id)
+
+
 async def _run_feature_edit(project: Dict[str, Any], type_id: int) -> Dict[str, Any]:
     prompt = FEATURE_PROMPTS.get(type_id, FEATURE_PROMPTS[1])
     project_id = int(project["id"])
@@ -205,12 +238,14 @@ async def _run_feature_edit(project: Dict[str, Any], type_id: int) -> Dict[str, 
 
     try:
         response = await send_session_message(session["session_key"], prompt, acp_mode=True, mode="dream")
-        messages = await get_session_messages(session_id)
+        messages = await _wait_for_saved_assistant_message(session_id)
     finally:
         lock_released = await release_session_lock(session_id)
 
-    failure_class = _classify_feature_edit_failure(response)
-    ok = _response_looks_successful(response) and len(messages) >= 2 and not failure_class
+    saved_response = _latest_assistant_response(messages)
+    response_for_result = saved_response or response
+    failure_class = _classify_feature_edit_failure(response_for_result)
+    ok = _response_looks_successful(response_for_result) and len(messages) >= 2 and not failure_class
 
     return {
         "ok": ok,
@@ -219,8 +254,10 @@ async def _run_feature_edit(project: Dict[str, Any], type_id: int) -> Dict[str, 
         "session_key": session.get("session_key"),
         "lock_released": lock_released,
         "failure_class": failure_class,
+        "response_source": (response_for_result or {}).get("source", "stream_response") if response_for_result else None,
+        "transport_error": bool((response or {}).get("transport_error")) if response else False,
         "messages_count": len(messages),
-        "response_preview": json.dumps(response)[:600] if response else None,
+        "response_preview": json.dumps(response_for_result)[:600] if response_for_result else None,
     }
 
 

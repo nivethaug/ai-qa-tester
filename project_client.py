@@ -172,6 +172,7 @@ async def send_session_message(
     message: str,
     mode: str = "dream",
     acp_mode: bool = True,
+    stream: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """POST /chat using the same session chat endpoint as the web editor."""
     headers = _auth_headers()
@@ -181,22 +182,70 @@ async def send_session_message(
     payload = {
         "session_key": session_key,
         "messages": [{"role": "user", "content": message}],
-        "stream": False,
+        "stream": stream,
         "acp_mode": acp_mode,
         "mode": mode,
     }
 
     try:
         async with httpx.AsyncClient(timeout=CHAT_TIMEOUT) as client:
-            resp = await client.post(f"{BACKEND_URL}/chat", json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-            log_event("CHAT", f"Session message completed key={session_key} bytes={len(json.dumps(data))}")
+            if not stream:
+                resp = await client.post(f"{BACKEND_URL}/chat", json=payload, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+                log_event("CHAT", f"Session message completed key={session_key} bytes={len(json.dumps(data))}")
+                return data
+
+            chunks = []
+            errors = []
+            async with client.stream("POST", f"{BACKEND_URL}/chat", json=payload, headers=headers) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    raw = line[len("data:"):].strip()
+                    if raw == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(raw)
+                    except json.JSONDecodeError:
+                        chunks.append(raw)
+                        continue
+
+                    if event.get("error"):
+                        errors.append(str(event["error"]))
+                        continue
+
+                    choices = event.get("choices") or []
+                    if choices:
+                        delta = choices[0].get("delta") or {}
+                        content = delta.get("content")
+                        if content:
+                            chunks.append(content)
+
+            content = "".join(chunks).strip()
+            data = {
+                "id": 0,
+                "role": "assistant",
+                "content": content,
+                "stream": True,
+                "errors": errors,
+            }
+            log_event("CHAT", f"Streaming session message completed key={session_key} chars={len(content)} errors={len(errors)}")
             return data
     except httpx.HTTPStatusError as e:
         log_error("CHAT", f"HTTP {e.response.status_code}: {e.response.text[:500]}")
     except Exception as e:
-        log_error("CHAT", f"Session message failed: {e}")
+        error_text = f"{type(e).__name__}: {repr(e)}"
+        log_error("CHAT", f"Session message failed: {error_text}")
+        return {
+            "id": 0,
+            "role": "assistant",
+            "content": "",
+            "stream": stream,
+            "transport_error": True,
+            "errors": [error_text],
+        }
     return None
 
 
