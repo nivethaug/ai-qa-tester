@@ -32,6 +32,7 @@ from project_client import (
     create_session,
     get_project_status,
     get_session_messages,
+    release_session_lock,
     send_session_message,
 )
 from storage import upsert_project, update_status
@@ -170,6 +171,25 @@ def _response_looks_successful(response: Optional[Dict[str, Any]]) -> bool:
     return not any(marker in text for marker in failure_markers)
 
 
+def _classify_feature_edit_failure(response: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Return a stable failure class for common edit-runtime problems."""
+    if not response:
+        return "no_response"
+
+    text = json.dumps(response).lower()
+    if "acpx not found" in text or "acpx command not found" in text:
+        return "edit_runtime_missing"
+    if "session_message_in_progress" in text or "still working on the previous message" in text:
+        return "session_busy"
+    if "insufficient_credits" in text or "insufficient credits" in text:
+        return "insufficient_credits"
+    if "could not initialize" in text:
+        return "editor_initialization_failed"
+    if "traceback" in text or "error:" in text or "failed" in text:
+        return "edit_failed"
+    return None
+
+
 async def _run_feature_edit(project: Dict[str, Any], type_id: int) -> Dict[str, Any]:
     prompt = FEATURE_PROMPTS.get(type_id, FEATURE_PROMPTS[1])
     project_id = int(project["id"])
@@ -178,15 +198,27 @@ async def _run_feature_edit(project: Dict[str, Any], type_id: int) -> Dict[str, 
     if not session:
         return {"ok": False, "stage": "create_session", "message": "Session creation failed"}
 
-    response = await send_session_message(session["session_key"], prompt, acp_mode=True, mode="dream")
-    messages = await get_session_messages(int(session["id"]))
-    ok = _response_looks_successful(response) and len(messages) >= 2
+    session_id = int(session["id"])
+    response = None
+    messages: List[Dict[str, Any]] = []
+    lock_released = False
+
+    try:
+        response = await send_session_message(session["session_key"], prompt, acp_mode=True, mode="dream")
+        messages = await get_session_messages(session_id)
+    finally:
+        lock_released = await release_session_lock(session_id)
+
+    failure_class = _classify_feature_edit_failure(response)
+    ok = _response_looks_successful(response) and len(messages) >= 2 and not failure_class
 
     return {
         "ok": ok,
         "stage": "feature_edit",
-        "session_id": session.get("id"),
+        "session_id": session_id,
         "session_key": session.get("session_key"),
+        "lock_released": lock_released,
+        "failure_class": failure_class,
         "messages_count": len(messages),
         "response_preview": json.dumps(response)[:600] if response else None,
     }

@@ -213,7 +213,26 @@ async def get_session_messages(session_id: int) -> list[Dict[str, Any]]:
             return resp.json()
     except Exception as e:
         log_error("SESSION", f"GET /sessions/{session_id}/messages failed: {e}")
-        return []
+    return []
+
+
+async def release_session_lock(session_id: int) -> bool:
+    """POST /sessions/{id}/release-lock so QA runs do not leave projects blocked."""
+    headers = _auth_headers()
+    if not headers:
+        return False
+
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+            resp = await client.post(f"{BACKEND_URL}/sessions/{session_id}/release-lock", headers=headers)
+            resp.raise_for_status()
+            log_event("SESSION", f"Released session lock id={session_id}")
+            return True
+    except httpx.HTTPStatusError as e:
+        log_error("SESSION", f"Release lock HTTP {e.response.status_code}: {e.response.text[:200]}")
+    except Exception as e:
+        log_error("SESSION", f"Release lock failed for {session_id}: {e}")
+    return False
 
 
 async def get_project(project_id: int) -> Optional[Dict[str, Any]]:
