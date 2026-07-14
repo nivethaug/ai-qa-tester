@@ -7,6 +7,7 @@ Usage:
     python main.py --no-verify    # Create + track projects only (skip Claude verification)
     python main.py --report       # Print CLI summary report
     python main.py --verify 42    # Manually verify project #42
+    python main.py --stability-suite
 """
 
 import argparse
@@ -19,6 +20,7 @@ from scheduler import creation_loop, status_loop
 from reporter import print_cli_report
 from verifier import verify_project
 from project_client import get_project
+from stability_suite import run_stability_suite
 from config import MAX_ACTIVE_PROJECTS, CREATE_INTERVAL, STATUS_POLL_INTERVAL
 from logger import log_event
 
@@ -68,6 +70,12 @@ def main():
     parser.add_argument("--report", action="store_true", help="Print CLI summary report")
     parser.add_argument("--verify", type=int, metavar="ID", help="Manually verify project ID")
     parser.add_argument("--no-verify", action="store_true", help="Skip Claude verification (local testing)")
+    parser.add_argument("--stability-suite", action="store_true", help="Run one controlled product stability suite")
+    parser.add_argument(
+        "--types",
+        metavar="IDS",
+        help="Comma-separated project type IDs for --stability-suite, e.g. 1,2,3,5",
+    )
     args = parser.parse_args()
 
     if args.no_verify:
@@ -83,6 +91,20 @@ def main():
     if args.verify:
         init_db()
         asyncio.run(manual_verify(args.verify))
+        return
+
+    if args.stability_suite:
+        init_db()
+        project_types = None
+        if args.types:
+            project_types = [int(t.strip()) for t in args.types.split(",") if t.strip().isdigit()]
+        report = asyncio.run(run_stability_suite(project_types))
+        print()
+        print("DreamAgent stability suite")
+        print(f"Result: {'PASS' if report.get('ok') else 'FAIL'}")
+        for item in report.get("results", []):
+            status = "PASS" if item.get("ok") else "FAIL"
+            print(f"- {status} {item.get('type_label')} project={item.get('project_id')} domain={item.get('domain')}")
         return
 
     # Default: run the full system

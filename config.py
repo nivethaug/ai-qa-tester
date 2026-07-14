@@ -90,3 +90,37 @@ TEST_SCHEDULER_EMAIL_TO = os.getenv("TEST_SCHEDULER_EMAIL_TO", SMTP_TO.split(","
 
 # ── Misc ──────────────────────────────────────────────
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# Product stability suite
+# Explicit release-style suite. It creates projects, waits for readiness, then
+# optionally runs one add-feature session against each created project.
+STABILITY_PROJECT_TYPES = [
+    int(t.strip())
+    for t in os.getenv("STABILITY_PROJECT_TYPES", "1,2,3,5").split(",")
+    if t.strip().isdigit()
+]
+STABILITY_EDIT_PROJECT_TYPES = [
+    int(t.strip())
+    for t in os.getenv("STABILITY_EDIT_PROJECT_TYPES", "1,2,3,5").split(",")
+    if t.strip().isdigit()
+]
+STABILITY_WAIT_TIMEOUT = int(os.getenv("STABILITY_WAIT_TIMEOUT", "2400"))
+STABILITY_POLL_INTERVAL = int(os.getenv("STABILITY_POLL_INTERVAL", "20"))
+STABILITY_RUN_FEATURE_EDIT = os.getenv("STABILITY_RUN_FEATURE_EDIT", "true").lower() in ("true", "1", "yes")
+STABILITY_USE_INITIAL_ENV = os.getenv("STABILITY_USE_INITIAL_ENV", "false").lower() in ("true", "1", "yes")
+
+# Up to two generic create-time env vars. Docs URL is required by DreamAgent
+# creation rules so Project AI can verify the integration before using it.
+STABILITY_ENV_VARS = []
+for _idx in ("1", "2"):
+    _key = os.getenv(f"STABILITY_ENV{_idx}_KEY", "").strip()
+    _value = os.getenv(f"STABILITY_ENV{_idx}_VALUE", "").strip()
+    _docs_url = os.getenv(f"STABILITY_ENV{_idx}_DOCS_URL", "").strip()
+    _description = os.getenv(f"STABILITY_ENV{_idx}_DESCRIPTION", "").strip()
+    if _key or _value or _docs_url or _description:
+        STABILITY_ENV_VARS.append({
+            "key": _key,
+            "value": _value,
+            "docs_url": _docs_url,
+            "description": _description,
+        })

@@ -5,6 +5,7 @@ Supports active project types: website, telegrambot, discordbot, scheduler.
 """
 
 import httpx
+import json
 from typing import Optional, Dict, Any
 
 from config import (
@@ -16,6 +17,7 @@ from config import (
 from logger import log_event, log_error
 
 TIMEOUT = 30.0
+CHAT_TIMEOUT = 1200.0
 
 
 def _auth_headers() -> Optional[Dict[str, str]]:
@@ -26,7 +28,12 @@ def _auth_headers() -> Optional[Dict[str, str]]:
     return {"Authorization": f"Bearer {BACKEND_AUTH_TOKEN}"}
 
 
-def _build_payload(name: str, description: str, type_id: int) -> Optional[Dict[str, Any]]:
+def _build_payload(
+    name: str,
+    description: str,
+    type_id: int,
+    environment_variables: Optional[list[Dict[str, str]]] = None,
+) -> Optional[Dict[str, Any]]:
     """Build creation payload with type-specific fields."""
     payload = {
         "name": name,
@@ -70,15 +77,23 @@ def _build_payload(name: str, description: str, type_id: int) -> Optional[Dict[s
             log_error("CREATE", "No scheduler sender channels configured, skipping scheduler")
             return None
 
+    if environment_variables:
+        payload["environment_variables"] = environment_variables[:2]
+
     return payload
 
 
-async def create_project(name: str, description: str, type_id: int = 1) -> Optional[Dict[str, Any]]:
+async def create_project(
+    name: str,
+    description: str,
+    type_id: int = 1,
+    environment_variables: Optional[list[Dict[str, str]]] = None,
+) -> Optional[Dict[str, Any]]:
     """
     POST /projects - create a new project of any active supported type.
     Returns the project dict with id, domain, status, etc.
     """
-    payload = _build_payload(name, description, type_id)
+    payload = _build_payload(name, description, type_id, environment_variables=environment_variables)
     if not payload:
         return None
 
@@ -110,6 +125,95 @@ async def create_project(name: str, description: str, type_id: int = 1) -> Optio
         log_error("CREATE", f"Failed: {e}")
 
     return None
+
+
+async def list_sessions(project_id: int) -> list[Dict[str, Any]]:
+    """GET /projects/{id}/sessions."""
+    headers = _auth_headers()
+    if not headers:
+        return []
+
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+            resp = await client.get(f"{BACKEND_URL}/projects/{project_id}/sessions", headers=headers)
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        log_error("SESSION", f"GET /projects/{project_id}/sessions failed: {e}")
+        return []
+
+
+async def create_session(project_id: int, label: str) -> Optional[Dict[str, Any]]:
+    """POST /projects/{id}/sessions."""
+    headers = _auth_headers()
+    if not headers:
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+            resp = await client.post(
+                f"{BACKEND_URL}/projects/{project_id}/sessions",
+                json={"label": label, "project_id": project_id},
+                headers=headers,
+            )
+            resp.raise_for_status()
+            session = resp.json()
+            log_event("SESSION", f"Created session id={session.get('id')} project={project_id}")
+            return session
+    except httpx.HTTPStatusError as e:
+        log_error("SESSION", f"HTTP {e.response.status_code}: {e.response.text[:200]}")
+    except Exception as e:
+        log_error("SESSION", f"Create session failed: {e}")
+    return None
+
+
+async def send_session_message(
+    session_key: str,
+    message: str,
+    mode: str = "dream",
+    acp_mode: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """POST /chat using the same session chat endpoint as the web editor."""
+    headers = _auth_headers()
+    if not headers:
+        return None
+
+    payload = {
+        "session_key": session_key,
+        "messages": [{"role": "user", "content": message}],
+        "stream": False,
+        "acp_mode": acp_mode,
+        "mode": mode,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=CHAT_TIMEOUT) as client:
+            resp = await client.post(f"{BACKEND_URL}/chat", json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            log_event("CHAT", f"Session message completed key={session_key} bytes={len(json.dumps(data))}")
+            return data
+    except httpx.HTTPStatusError as e:
+        log_error("CHAT", f"HTTP {e.response.status_code}: {e.response.text[:500]}")
+    except Exception as e:
+        log_error("CHAT", f"Session message failed: {e}")
+    return None
+
+
+async def get_session_messages(session_id: int) -> list[Dict[str, Any]]:
+    """GET /sessions/{id}/messages."""
+    headers = _auth_headers()
+    if not headers:
+        return []
+
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+            resp = await client.get(f"{BACKEND_URL}/sessions/{session_id}/messages", headers=headers)
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        log_error("SESSION", f"GET /sessions/{session_id}/messages failed: {e}")
+        return []
 
 
 async def get_project(project_id: int) -> Optional[Dict[str, Any]]:
