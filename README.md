@@ -46,6 +46,12 @@ Reports are written to:
 reports/stability_YYYYMMDD_HHMMSS.json
 ```
 
+Detailed create-project and edit-session testing steps are documented in:
+
+```text
+PROJECT_SESSION_TESTING.md
+```
+
 ## Environment variable integration testing
 
 Creation-time env vars are optional and capped at two entries, matching DreamAgent backend rules.
